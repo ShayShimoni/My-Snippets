@@ -1,0 +1,58 @@
+package com.acl.aclandroid.data.apis
+
+import android.content.Context
+import androidx.room.Room
+import co.infinum.retromock.NonEmptyBodyFactory
+import co.infinum.retromock.Retromock
+import com.acl.aclandroid.AssetBodyFactory
+import com.skydoves.sandwich.adapters.ApiResponseCallAdapterFactory
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.converter.scalars.ScalarsConverterFactory
+import java.util.*
+import java.util.concurrent.TimeUnit
+
+object DataManager {
+
+    private fun provideRetrofit(): Retrofit {
+        val logging = HttpLoggingInterceptor()
+        logging.setLevel(HttpLoggingInterceptor.Level.BODY)
+
+        val httpClient = OkHttpClient.Builder()
+            .addInterceptor(logging)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .protocols(Collections.singletonList(Protocol.HTTP_1_1))
+            .build()
+
+        return Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .addConverterFactory(ScalarsConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create())
+            .addCallAdapterFactory(ApiResponseCallAdapterFactory.create())
+            .client(httpClient)
+            .build()
+    }
+
+    fun provideLocationApi(): API {
+        return provideRetrofit().create(API::class.java)
+    }
+
+    fun provideRetroMockAPI(context: Context): API {
+        val retromock = Retromock.Builder().retrofit(provideRetrofit())
+            .defaultBodyFactory(NonEmptyBodyFactory(AssetBodyFactory(context.assets)))
+            .build()
+        return retromock.create(API::class.java)
+    }
+
+    fun provideDataBase(context: Context): AclDataBase {
+        return Room.databaseBuilder(
+            context,
+            DataBase::class.java, "name-database"
+        ).build()
+    }
+}

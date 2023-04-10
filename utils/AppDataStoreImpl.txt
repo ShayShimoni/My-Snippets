@@ -1,0 +1,55 @@
+/*
+ * Copyright (c) 2022. By Shahar Keisar
+ */
+
+package com.codere.hookaps.main.data.local
+
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import com.codere.hookaps.main.domain.abstractions.AppDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+private val Context.applicationDataStore: DataStore<Preferences> by preferencesDataStore(name = AppDataStoreImpl.APPLICATION_STORE_NAME)
+
+
+class AppDataStoreImpl(context: Context) : AppDataStore {
+    companion object {
+        const val APPLICATION_STORE_NAME = "application_store"
+    }
+
+    private val applicationDataStore = context.applicationDataStore
+
+
+    override suspend fun saveToken(token: String) {
+        applicationDataStore.edit { preferences -> preferences[TOKEN_KEY] = token }
+    }
+
+    override suspend fun removeToken() {
+        applicationDataStore.edit { preferences -> preferences.remove(TOKEN_KEY) }
+    }
+
+    override fun getToken() =
+        applicationDataStore.data.map { preferences -> preferences[TOKEN_KEY] ?: "no token" }
+
+
+    override suspend fun saveEmailAddress(emailAddress: String) {
+        applicationDataStore.edit { preferences -> preferences[EMAIL_ADDRESS_KEY] = emailAddress }
+    }
+
+    override suspend fun removeEmailAddress() {
+        applicationDataStore.edit { preferences -> preferences.remove(EMAIL_ADDRESS_KEY) }
+    }
+
+    override fun getEmailAddress(): Flow<String?> =
+        applicationDataStore.data.map { preferences -> preferences[EMAIL_ADDRESS_KEY] }
+
+
+}
+
+private val TOKEN_KEY = stringPreferencesKey("token")
+private val EMAIL_ADDRESS_KEY = stringPreferencesKey("email_address")

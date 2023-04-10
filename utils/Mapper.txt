@@ -1,0 +1,9 @@
+/**The Mapper interface is a generic interface that takes two type parameters,
+ *  T and R, and defines a single method, invoke(),
+ *  which takes a single parameter of type T and returns a value of type R.
+ *  The invoke() method is a special method in Kotlin that allows an object to be called like a function.
+ *  Therefore, objects that implement the Mapper interface can be used to transform values of type T into values of type R.*/
+
+interface Mapper<T, R> {
+    operator fun invoke(param: T): R
+}

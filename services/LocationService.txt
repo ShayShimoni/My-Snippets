@@ -1,0 +1,178 @@
+
+import android.annotation.SuppressLint
+import android.app.*
+import android.content.Context
+import android.content.Intent
+import android.location.Location
+import android.os.IBinder
+import android.os.PowerManager
+import androidx.core.app.NotificationCompat
+import com.acl.aclandroid.R
+import com.acl.aclandroid.data.apis.DataManager
+import com.acl.aclandroid.enums.TimeFormatType.*
+import com.acl.aclandroid.receivers.ServiceAlarmReceiver
+import com.acl.aclandroid.services.interfaces.LocationClient
+import com.acl.aclandroid.utils.Utilities
+import com.google.android.gms.location.LocationServices
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import java.text.SimpleDateFormat
+import java.util.*
+
+class LocationService : Service() {
+
+    private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private lateinit var locationClient: LocationClient
+    private lateinit var dataBase: Database
+    private lateinit var repository: Repository
+    private lateinit var wakeLock: PowerManager.WakeLock
+
+    override fun onCreate() {
+        super.onCreate()
+        locationClient = MyLocationClient(
+            applicationContext,
+            LocationServices.getFusedLocationProviderClient(applicationContext)
+        )
+        dataBase = DataManager.provideDataBase(applicationContext)
+        repository = RepositoryImpl(DataManager.provideLocationApi())
+    }
+
+    @SuppressLint("WakelockTimeout")
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val powerManager = applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "JustInTime::LocationService")
+        wakeLock.acquire()
+
+        val notification =
+            NotificationCompat.Builder(this, getString(R.string.notification_channel_id))
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSilent(true)
+                .setPriority(NotificationCompat.PRIORITY_MIN)
+
+        coroutineScope.launch(Dispatchers.IO) {
+
+            val interval = dataBase.systemRequirementsDao().getRequirements().reportFrequency * 60  * 1000L
+            locationClient.getLocationUpdates(interval)
+                .catch { e -> e.printStackTrace() }
+                .onEach { location ->
+                    manageLocationReports(location)
+                }.launchIn(coroutineScope)
+        }
+
+        startForeground(1000, notification.build())
+
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val serviceIntent = Intent(this, ServiceAlarmReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(
+            this,
+            0,
+            serviceIntent,
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        alarmManager.setRepeating(
+            AlarmManager.RTC_WAKEUP,
+            System.currentTimeMillis(),
+            10 * 60 * 1000,
+            pendingIntent
+        )
+
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent): IBinder? {
+        return null
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        wakeLock.release()
+        coroutineScope.cancel()
+    }
+
+    private suspend fun isAliveReport(
+        uuid: String,
+        phoneNumber: String,
+        lastUpdateDateTime: String,
+        status: ReportStatus,
+        companiesLocalityId: Int,
+        dateTime: String? = null
+    ) {
+        repository.isAlive(
+            isAliveRequest = IsAliveRequest(
+                uuid = uuid,
+                phoneNumber = phoneNumber,
+                lastUpdateDateTime = lastUpdateDateTime,
+                status = status.value,
+                companiesLocalityId = companiesLocalityId,
+                dateTime = dateTime
+            ),
+            onError = {
+                Utilities.showGeneralAlertDialog(
+                    applicationContext,
+                    title = getString(R.string.dialog_error_title),
+                    message = getString(R.string.dialog_general_error_message),
+                    positiveButtonText = getString(R.string.dialog_error_btn_text),
+                    positiveButtonListener = { dialog, _ ->
+                        dialog.dismiss()
+                    }
+                )
+            }
+        ).collectLatest {
+            when (it) {
+                IsAliveResponseType.RELOAD_SYSTEM_REQUIREMENTS.value -> setRequirements()
+                IsAliveResponseType.GENERAL_ERROR.value -> showErrorDialog()
+            }
+        }
+    }
+
+    private suspend fun setRequirements(){
+        repository.getSystemRequirements(
+            GetSystemRequirementsRequest(
+                requirements.uuid,
+                requirements.phoneNumber
+            ),
+            onError = {
+                Utilities.showGeneralAlertDialog(
+                    applicationContext,
+                    title = getString(R.string.dialog_error_title),
+                    message = getString(R.string.dialog_general_error_message),
+                    positiveButtonText = getString(R.string.dialog_error_btn_text),
+                    positiveButtonListener = { dialog, _ ->
+                        dialog.dismiss()
+                    }
+                )
+            }
+        ).collectLatest { systemRequirements ->
+            if (systemRequirements.isNotEmpty()){
+                dataBase.systemRequirementsDao().setRequirements(
+                    SystemRequirements.fromResponseToEntity(
+                        systemRequirements.first()
+                    )
+                )
+            }else{
+                showErrorDialog()
+            }
+        }
+    }
+
+    @SuppressLint("SimpleDateFormat")
+    private suspend fun manageLocationReports(location: Location) {
+        val now = Date()
+        val formattedDate = SimpleDateFormat(FORMAT_ISO1806.value).format(now)
+    }
+
+    private fun showErrorDialog() {
+        Utilities.showGeneralAlertDialog(
+            applicationContext,
+            title = getString(R.string.dialog_error_title),
+            message = getString(R.string.dialog_general_error_message),
+            positiveButtonText = getString(R.string.dialog_error_btn_text),
+            positiveButtonListener = { dialog, _ ->
+                dialog.dismiss()
+            }
+        )
+    }
+}
